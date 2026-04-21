@@ -26,7 +26,7 @@ docker run -d \
   --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   ghcr.io/xkairbekov/bypassdpi:latest \
-  --domains youtube.com,instagram.com,twitter.com
+  --domains youtube.com,instagram.com,x.com
 ```
  
 ### Binary
@@ -71,7 +71,7 @@ Alternative public DoH endpoints are listed at [dnsprivacy.org](https://dnspriva
 | Rule | Matches |
 |---|---|
 | `youtube.com` | `youtube.com`, `m.youtube.com`, `music.youtube.com` |
-| `twitter.com` | `twitter.com`, `api.twitter.com` |
+| `x.com` | `x.com`, `api.x.com` |
  
 ---
 
