@@ -117,29 +117,61 @@ func (s *Server) relayConnect(clientConn net.Conn, clientReader *bufio.Reader, u
 }
 
 func (s *Server) copyClientToUpstream(clientConn net.Conn, reader *bufio.Reader, upstreamConn net.Conn, host string, port string, target string, remoteAddr string) error {
-	if s.options.ClientHelloTimeout > 0 {
-		_ = clientConn.SetReadDeadline(time.Now().Add(s.options.ClientHelloTimeout))
-	}
-
-	firstChunk := make([]byte, maxInitialPayload)
-	readBytes, readErr := reader.Read(firstChunk)
-	_ = clientConn.SetReadDeadline(time.Time{})
-
-	if readBytes > 0 {
-		if err := s.writeInitialPayload(upstreamConn, firstChunk[:readBytes], host, port, target, remoteAddr); err != nil {
-			return fmt.Errorf("write initial CONNECT payload: %w", err)
+	if port == "443" {
+		initialPayload, err := s.readInitialTLSPayload(clientConn, reader)
+		if err != nil {
+			return err
 		}
-	}
-
-	if readErr != nil {
-		if errors.Is(readErr, io.EOF) {
-			return nil
+		if len(initialPayload) > 0 {
+			if err := s.writeInitialPayload(upstreamConn, initialPayload, host, port, target, remoteAddr); err != nil {
+				return fmt.Errorf("write initial CONNECT payload: %w", err)
+			}
 		}
-		return readErr
 	}
 
 	_, err := io.CopyBuffer(upstreamConn, reader, make([]byte, 32<<10))
 	return err
+}
+
+func (s *Server) readInitialTLSPayload(clientConn net.Conn, reader *bufio.Reader) ([]byte, error) {
+	if s.options.ClientHelloTimeout > 0 {
+		_ = clientConn.SetReadDeadline(time.Now().Add(s.options.ClientHelloTimeout))
+		defer func() {
+			_ = clientConn.SetReadDeadline(time.Time{})
+		}()
+	}
+
+	payload := make([]byte, 0, maxInitialPayload)
+	chunk := make([]byte, 4<<10)
+
+	for len(payload) < maxInitialPayload {
+		n, err := reader.Read(chunk)
+		if n > 0 {
+			payload = append(payload, chunk[:n]...)
+
+			_, inspectErr := tlshello.Inspect(payload)
+			switch {
+			case inspectErr == nil:
+				return payload, nil
+			case errors.Is(inspectErr, tlshello.ErrIncompleteHello):
+			default:
+				return payload, nil
+			}
+		}
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, nil
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return payload, nil
+			}
+			return payload, err
+		}
+	}
+
+	return payload, nil
 }
 
 func (s *Server) writeInitialPayload(upstream io.Writer, payload []byte, host string, port string, target string, remoteAddr string) error {

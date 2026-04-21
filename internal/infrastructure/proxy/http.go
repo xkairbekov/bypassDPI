@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -118,22 +119,10 @@ func (s *Server) handleBypassedHTTP(w http.ResponseWriter, request *http.Request
 		}
 	}()
 
-	rawRequest, splitOffset, manipulated, err := buildManipulatedHTTPRequest(request)
+	splitOffset, manipulated, err := s.writeBypassedHTTPRequest(conn, request)
 	if err != nil {
-		s.logger.Debug("failed to build manipulated HTTP request",
-			"method", request.Method,
-			"host", request.URL.Host,
-			"error", err,
-		)
-		return false
-	}
-	if !manipulated {
-		return false
-	}
-
-	if err := writeSplit(conn, rawRequest, splitOffset, s.options.SplitDelay); err != nil {
 		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
-		s.logger.Error("failed to send manipulated HTTP request",
+		s.logger.Error("failed to send bypassed HTTP request",
 			"method", request.Method,
 			"host", request.URL.Host,
 			"error", err,
@@ -172,56 +161,129 @@ func (s *Server) handleBypassedHTTP(w http.ResponseWriter, request *http.Request
 		return true
 	}
 
-	s.logger.Debug("applied HTTP Host bypass",
-		"method", request.Method,
-		"host", request.URL.Host,
-		"status", response.StatusCode,
-		"bytes", written,
-		"split_offset", splitOffset,
-		"duration", time.Since(startedAt),
-	)
+	if manipulated {
+		s.logger.Debug("applied HTTP Host bypass",
+			"method", request.Method,
+			"host", request.URL.Host,
+			"status", response.StatusCode,
+			"bytes", written,
+			"split_offset", splitOffset,
+			"duration", time.Since(startedAt),
+		)
+	} else {
+		s.logger.Debug("proxied HTTP bypass candidate without header rewrite",
+			"method", request.Method,
+			"host", request.URL.Host,
+			"status", response.StatusCode,
+			"bytes", written,
+			"duration", time.Since(startedAt),
+		)
+	}
 
 	return true
 }
 
-func buildManipulatedHTTPRequest(request *http.Request) ([]byte, int, bool, error) {
+func (s *Server) writeBypassedHTTPRequest(conn net.Conn, request *http.Request) (int, bool, error) {
 	cloned := request.Clone(request.Context())
 	cloned.RequestURI = ""
 	cloned.Close = true
 
-	var raw bytes.Buffer
-	if err := cloned.Write(&raw); err != nil {
-		return nil, 0, false, fmt.Errorf("serialize request: %w", err)
+	pipeReader, pipeWriter := io.Pipe()
+	go func() {
+		_ = pipeWriter.CloseWithError(cloned.Write(pipeWriter))
+	}()
+
+	headerBlock, bodyPrefix, err := readHTTPHeaderBlock(pipeReader)
+	if err != nil {
+		_ = pipeReader.CloseWithError(err)
+		return 0, false, fmt.Errorf("read request headers: %w", err)
 	}
 
-	payload := raw.Bytes()
-	hostHeaderIndex := bytes.Index(payload, []byte("\r\nHost:"))
+	rewrittenHeader, splitOffset, manipulated, err := rewriteHTTPRequestHeaders(headerBlock)
+	if err != nil {
+		_ = pipeReader.CloseWithError(err)
+		return 0, false, fmt.Errorf("rewrite request headers: %w", err)
+	}
+
+	if err := writeSplit(conn, rewrittenHeader, splitOffset, s.options.SplitDelay); err != nil {
+		_ = pipeReader.CloseWithError(err)
+		return splitOffset, manipulated, err
+	}
+	if len(bodyPrefix) > 0 {
+		if err := writeAll(conn, bodyPrefix); err != nil {
+			_ = pipeReader.CloseWithError(err)
+			return splitOffset, manipulated, err
+		}
+	}
+
+	_, err = io.CopyBuffer(conn, pipeReader, make([]byte, 32<<10))
+	if err != nil {
+		_ = pipeReader.CloseWithError(err)
+		return splitOffset, manipulated, err
+	}
+
+	return splitOffset, manipulated, nil
+}
+
+func readHTTPHeaderBlock(reader io.Reader) ([]byte, []byte, error) {
+	buffer := make([]byte, 0, 16<<10)
+	chunk := make([]byte, 4<<10)
+
+	for len(buffer) < maxPeekBuffer {
+		n, err := reader.Read(chunk)
+		if n > 0 {
+			buffer = append(buffer, chunk[:n]...)
+			if headerEnd := bytes.Index(buffer, []byte("\r\n\r\n")); headerEnd >= 0 {
+				headerEnd += 4
+				header := make([]byte, headerEnd)
+				copy(header, buffer[:headerEnd])
+
+				bodyPrefix := make([]byte, len(buffer)-headerEnd)
+				copy(bodyPrefix, buffer[headerEnd:])
+
+				return header, bodyPrefix, nil
+			}
+		}
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, nil, err
+		}
+	}
+
+	return nil, nil, fmt.Errorf("HTTP header block exceeds %d bytes or is incomplete", maxPeekBuffer)
+}
+
+func rewriteHTTPRequestHeaders(headerBlock []byte) ([]byte, int, bool, error) {
+	hostHeaderIndex := bytes.Index(headerBlock, []byte("\r\nHost:"))
 	if hostHeaderIndex < 0 {
-		return payload, 0, false, nil
+		return headerBlock, 0, false, nil
 	}
 
 	headerStart := hostHeaderIndex + 2
 	valueStart := headerStart + len("Host:")
-	for valueStart < len(payload) && (payload[valueStart] == ' ' || payload[valueStart] == '\t') {
+	for valueStart < len(headerBlock) && (headerBlock[valueStart] == ' ' || headerBlock[valueStart] == '\t') {
 		valueStart++
 	}
 
-	valueEndRel := bytes.Index(payload[valueStart:], []byte("\r\n"))
+	valueEndRel := bytes.Index(headerBlock[valueStart:], []byte("\r\n"))
 	if valueEndRel < 0 {
 		return nil, 0, false, fmt.Errorf("locate Host header terminator")
 	}
 	valueEnd := valueStart + valueEndRel
-	hostValue := string(payload[valueStart:valueEnd])
+	hostValue := string(headerBlock[valueStart:valueEnd])
 	hostOffset := preferredHTTPHostOffset(hostValue)
 	if hostOffset <= 0 {
 		hostOffset = 1
 	}
 
-	rewritten := make([]byte, 0, len(payload)-1)
-	rewritten = append(rewritten, payload[:headerStart]...)
+	rewritten := make([]byte, 0, len(headerBlock)-1)
+	rewritten = append(rewritten, headerBlock[:headerStart]...)
 	rewritten = append(rewritten, []byte("hOSt:")...)
-	rewritten = append(rewritten, payload[valueStart:valueEnd]...)
-	rewritten = append(rewritten, payload[valueEnd:]...)
+	rewritten = append(rewritten, headerBlock[valueStart:valueEnd]...)
+	rewritten = append(rewritten, headerBlock[valueEnd:]...)
 
 	splitOffset := headerStart + len("hOSt:") + hostOffset
 	if splitOffset <= 0 || splitOffset >= len(rewritten) {
