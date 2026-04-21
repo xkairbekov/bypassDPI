@@ -132,9 +132,7 @@ func (c Config) Validate() error {
 }
 
 func Usage() string {
-	return strings.TrimSpace(`bypassdpi is a fast HTTP proxy for DPI-sensitive networks.
-
-Usage:
+	return strings.TrimSpace(`Usage:
   bypassdpi --listen 0.0.0.0:8080 --dns 1.1.1.1 --doh-url https://cloudflare-dns.com/dns-query --max-connections 512 --split-delay 0ms --log-level info --domains example.com,youtube.com
 
 Flags:
