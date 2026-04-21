@@ -132,23 +132,43 @@ func (c Config) Validate() error {
 }
 
 func Usage() string {
-	return strings.TrimSpace(`Usage:
-  bypassdpi --listen 0.0.0.0:8080 --dns 1.1.1.1 --doh-url https://cloudflare-dns.com/dns-query --max-connections 512 --split-delay 0ms --log-level info --domains example.com,youtube.com
+	return strings.TrimSpace(`USAGE:
+  bypassdpi [options]
 
-Flags:
-  --listen 0.0.0.0:8080
-  --dns 1.1.1.1|system
-  --doh-url https://cloudflare-dns.com/dns-query|disable
-  --max-connections 512
-  --split-delay 0ms
-  --log-level info
-  --domains example.com,youtube.com
+OPTIONS:
+  --listen string
+        Proxy listen address.
+        (default: "0.0.0.0:8080")
+
+  --dns string <ip[:port]|"system">
+        Bootstrap DNS server used to resolve the DoH endpoint.
+        Use "system" to use the OS resolver.
+        (default: "1.1.1.1")
+
+  --doh-url string <https_url|"disable">
+        DNS-over-HTTPS endpoint used for regular DNS lookups.
+        Use "disable" to turn off DoH.
+        (default: "https://cloudflare-dns.com/dns-query")
+
+  --domains string
+        Comma-separated domains where bypass should be applied.
+        If empty, bypass is applied to all proxied traffic.
+
+  --split-delay duration
+        Delay between split fragments.
+        (default: "0ms")
+
+  --max-connections int
+        Maximum simultaneous client connections.
+        Use 0 to disable the limit.
+        (default: 512)
+
+  --log-level string <"error"|"info"|"debug">
+        Set log verbosity.
+        (default: "info")
+
   --help
-
-Log levels:
-  debug  detailed diagnostics, including TLS split events
-  info   startup and high-level runtime information
-  error  request-level failures
+        Show help.
 `)
 }
 
