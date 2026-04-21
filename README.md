@@ -54,7 +54,7 @@ HTTPS proxy: 127.0.0.1:8080
 |---|---|---|
 | `--listen` | `0.0.0.0:8080` | Address and port the proxy listens on |
 | `--dns` | `1.1.1.1` | Bootstrap DNS server used to resolve the DoH endpoint. Use `system` to use the OS resolver |
-| `--doh-url` | `https://cloudflare-dns.com/dns-query` | DNS-over-HTTPS endpoint for domain resolution. Use `disable` to turn off DoH |
+| `--doh-url` | `https://cloudflare-dns.com/dns-query` | HTTPS DNS-over-HTTPS endpoint for domain resolution. Use `disable` to turn off DoH |
 | `--domains` | *(empty)* | Comma-separated list of domains to apply bypass to; if empty, bypass is applied to **all** proxied traffic |
 | `--split-delay` | `0ms` | Delay between TCP fragment writes; increase if fragmentation is too fast for the destination to reassemble |
 | `--max-connections` | `512` | Maximum concurrent client connections; set to `0` for no limit |

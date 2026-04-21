@@ -53,7 +53,7 @@ func Parse(args []string) (Config, error) {
 	fs.SetOutput(discardWriter{})
 	fs.StringVar(&listen, "listen", DefaultListen, "Address to listen on.")
 	fs.StringVar(&dns, "dns", DefaultDNS, "DNS resolver address. Accepts host, host:port, or \"system\". Used as the DoH bootstrap resolver.")
-	fs.StringVar(&dohURL, "doh-url", DefaultDoHURL, "RFC 8484 DNS-over-HTTPS endpoint. Use \"disable\" to turn off DoH.")
+	fs.StringVar(&dohURL, "doh-url", DefaultDoHURL, "HTTPS DNS-over-HTTPS endpoint. Use \"disable\" to turn off DoH.")
 	fs.StringVar(&logLevel, "log-level", DefaultLogLevel, "Log level. Supported: debug, info, error.")
 	fs.StringVar(&domainsRaw, "domains", "", "Comma-separated list of domains to manipulate. If empty, bypass logic is applied to all proxied HTTP and HTTPS traffic.")
 	fs.IntVar(&maxConns, "max-connections", DefaultMaxConnections, "Maximum number of simultaneous client connections. Use 0 to disable the limit.")
@@ -113,8 +113,8 @@ func (c Config) Validate() error {
 		if err != nil {
 			return fmt.Errorf("invalid DoH URL %q: %w", c.DoHURL, err)
 		}
-		if parsed.Scheme != "https" && parsed.Scheme != "http" {
-			return fmt.Errorf("unsupported DoH URL scheme %q", parsed.Scheme)
+		if parsed.Scheme != "https" {
+			return fmt.Errorf("invalid DoH URL %q: only https:// is supported", c.DoHURL)
 		}
 		if parsed.Host == "" {
 			return fmt.Errorf("invalid DoH URL %q: missing host", c.DoHURL)
