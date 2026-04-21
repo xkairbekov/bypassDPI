@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	DefaultMode               = "http"
 	DefaultListen             = "0.0.0.0:8080"
 	DefaultDNS                = "1.1.1.1"
 	DefaultDoHURL             = "https://cloudflare-dns.com/dns-query"
@@ -27,7 +26,6 @@ const (
 )
 
 type Config struct {
-	Mode               string
 	Listen             string
 	DNS                string
 	DoHURL             string
@@ -42,7 +40,6 @@ type Config struct {
 
 func Parse(args []string) (Config, error) {
 	var (
-		mode       string
 		listen     string
 		dns        string
 		dohURL     string
@@ -54,7 +51,6 @@ func Parse(args []string) (Config, error) {
 
 	fs := flag.NewFlagSet("bypassdpi", flag.ContinueOnError)
 	fs.SetOutput(discardWriter{})
-	fs.StringVar(&mode, "mode", DefaultMode, "Proxy mode. Supported: http.")
 	fs.StringVar(&listen, "listen", DefaultListen, "Address to listen on.")
 	fs.StringVar(&dns, "dns", DefaultDNS, "DNS resolver address. Accepts host, host:port, or \"system\". Used as the DoH bootstrap resolver.")
 	fs.StringVar(&dohURL, "doh-url", DefaultDoHURL, "RFC 8484 DNS-over-HTTPS endpoint. Use \"disable\" to turn off DoH.")
@@ -81,7 +77,6 @@ func Parse(args []string) (Config, error) {
 	}
 
 	cfg := Config{
-		Mode:               strings.TrimSpace(mode),
 		Listen:             strings.TrimSpace(listen),
 		DNS:                normalizeDNSValue(dns),
 		DoHURL:             normalizeDoHURL(dohURL),
@@ -102,10 +97,6 @@ func Parse(args []string) (Config, error) {
 }
 
 func (c Config) Validate() error {
-	if c.Mode != DefaultMode {
-		return fmt.Errorf("unsupported mode %q: only %s is implemented", c.Mode, DefaultMode)
-	}
-
 	if _, _, err := net.SplitHostPort(c.Listen); err != nil {
 		return fmt.Errorf("invalid listen address %q: %w", c.Listen, err)
 	}
@@ -144,10 +135,9 @@ func Usage() string {
 	return strings.TrimSpace(`bypassdpi is a fast HTTP proxy for DPI-sensitive networks.
 
 Usage:
-  bypassdpi --mode http --listen 0.0.0.0:8080 --dns 1.1.1.1 --doh-url https://cloudflare-dns.com/dns-query --max-connections 512 --split-delay 0ms --log-level info --domains example.com,youtube.com
+  bypassdpi --listen 0.0.0.0:8080 --dns 1.1.1.1 --doh-url https://cloudflare-dns.com/dns-query --max-connections 512 --split-delay 0ms --log-level info --domains example.com,youtube.com
 
 Flags:
-  --mode http
   --listen 0.0.0.0:8080
   --dns 1.1.1.1|system
   --doh-url https://cloudflare-dns.com/dns-query|disable

@@ -38,7 +38,6 @@ func run() error {
 	defer stop()
 
 	startupLogger.Info("starting bypassdpi",
-		"mode", cfg.Mode,
 		"listen", cfg.Listen,
 		"dns", fallback(cfg.DNS, "system"),
 		"doh_url", fallback(cfg.DoHURL, "disable"),

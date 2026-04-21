@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -96,7 +97,6 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 	startupLogger.Info("proxy listening",
 		"listen", listener.Addr().String(),
-		"mode", "http",
 		"max_connections", maxConnectionsForLog(s.options.MaxConnections),
 	)
 
@@ -128,8 +128,10 @@ func (d *outboundDialer) DialContext(ctx context.Context, network string, addres
 	}
 
 	var lastErr error
+	attemptedTargets := make([]string, 0, len(ips))
 	for _, ip := range ips {
 		target := net.JoinHostPort(ip.String(), port)
+		attemptedTargets = append(attemptedTargets, target)
 		conn, err := (&net.Dialer{
 			Timeout:   d.timeout,
 			KeepAlive: 30 * time.Second,
@@ -151,7 +153,7 @@ func (d *outboundDialer) DialContext(ctx context.Context, network string, addres
 	if lastErr == nil {
 		lastErr = fmt.Errorf("resolver returned no dialable IPs for %s", host)
 	}
-	return nil, fmt.Errorf("connect to %s: %w", address, lastErr)
+	return nil, fmt.Errorf("connect to %s failed after trying [%s]: %w", address, strings.Join(attemptedTargets, ", "), lastErr)
 }
 
 func isCanceled(err error) bool {
