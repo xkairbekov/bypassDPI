@@ -41,7 +41,7 @@ func run() error {
 		"mode", cfg.Mode,
 		"listen", cfg.Listen,
 		"dns", fallback(cfg.DNS, "system"),
-		"doh_url", fallback(cfg.DoHURL, "disabled"),
+		"doh_url", fallback(cfg.DoHURL, "disable"),
 		"max_connections", maxConnectionsForLog(cfg.MaxConnections),
 		"split_delay", cfg.SplitDelay,
 		"log_level", strings.ToLower(cfg.LogLevel.String()),

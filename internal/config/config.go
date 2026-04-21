@@ -56,8 +56,8 @@ func Parse(args []string) (Config, error) {
 	fs.SetOutput(discardWriter{})
 	fs.StringVar(&mode, "mode", DefaultMode, "Proxy mode. Supported: http.")
 	fs.StringVar(&listen, "listen", DefaultListen, "Address to listen on.")
-	fs.StringVar(&dns, "dns", DefaultDNS, "DNS resolver address. Accepts host or host:port. Used as the DoH bootstrap resolver.")
-	fs.StringVar(&dohURL, "doh-url", DefaultDoHURL, "RFC 8484 DNS-over-HTTPS endpoint.")
+	fs.StringVar(&dns, "dns", DefaultDNS, "DNS resolver address. Accepts host, host:port, or \"system\". Used as the DoH bootstrap resolver.")
+	fs.StringVar(&dohURL, "doh-url", DefaultDoHURL, "RFC 8484 DNS-over-HTTPS endpoint. Use \"disable\" to turn off DoH.")
 	fs.StringVar(&logLevel, "log-level", DefaultLogLevel, "Log level. Supported: debug, info, error.")
 	fs.StringVar(&domainsRaw, "domains", "", "Comma-separated list of domains to manipulate. If empty, bypass logic is applied to all proxied HTTP and HTTPS traffic.")
 	fs.IntVar(&maxConns, "max-connections", DefaultMaxConnections, "Maximum number of simultaneous client connections. Use 0 to disable the limit.")
@@ -83,8 +83,8 @@ func Parse(args []string) (Config, error) {
 	cfg := Config{
 		Mode:               strings.TrimSpace(mode),
 		Listen:             strings.TrimSpace(listen),
-		DNS:                strings.TrimSpace(dns),
-		DoHURL:             strings.TrimSpace(dohURL),
+		DNS:                normalizeDNSValue(dns),
+		DoHURL:             normalizeDoHURL(dohURL),
 		LogLevel:           level,
 		Domains:            parseDomains(domainsRaw),
 		MaxConnections:     maxConns,
@@ -149,8 +149,8 @@ Usage:
 Flags:
   --mode http
   --listen 0.0.0.0:8080
-  --dns 1.1.1.1
-  --doh-url https://cloudflare-dns.com/dns-query
+  --dns 1.1.1.1|system
+  --doh-url https://cloudflare-dns.com/dns-query|disable
   --max-connections 512
   --split-delay 0ms
   --log-level info
@@ -195,6 +195,22 @@ func normalizeResolverAddress(value string) string {
 		return value
 	}
 	return net.JoinHostPort(value, "53")
+}
+
+func normalizeDNSValue(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(value, "system") {
+		return ""
+	}
+	return value
+}
+
+func normalizeDoHURL(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.EqualFold(value, "disable") {
+		return ""
+	}
+	return value
 }
 
 type discardWriter struct{}
