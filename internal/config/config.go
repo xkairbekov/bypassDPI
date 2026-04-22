@@ -14,28 +14,22 @@ import (
 )
 
 const (
-	DefaultListen             = "0.0.0.0:8080"
-	DefaultDNS                = "1.1.1.1"
-	DefaultDoHURL             = "https://cloudflare-dns.com/dns-query"
-	DefaultLogLevel           = "info"
-	DefaultMaxConnections     = 512
-	DefaultDialTimeout        = 10 * time.Second
-	DefaultIdleTimeout        = 2 * time.Minute
-	DefaultClientHelloTimeout = 5 * time.Second
-	DefaultSplitDelay         = 0 * time.Millisecond
+	DefaultListen         = "0.0.0.0:8080"
+	DefaultDNS            = "1.1.1.1"
+	DefaultDoHURL         = "https://cloudflare-dns.com/dns-query"
+	DefaultLogLevel       = "info"
+	DefaultMaxConnections = 512
+	DefaultSplitDelay     = 0 * time.Millisecond
 )
 
 type Config struct {
-	Listen             string
-	DNS                string
-	DoHURL             string
-	LogLevel           slog.Level
-	Domains            []string
-	MaxConnections     int
-	DialTimeout        time.Duration
-	IdleTimeout        time.Duration
-	ClientHelloTimeout time.Duration
-	SplitDelay         time.Duration
+	Listen         string
+	DNS            string
+	DoHURL         string
+	LogLevel       slog.Level
+	Domains        []string
+	MaxConnections int
+	SplitDelay     time.Duration
 }
 
 func Parse(args []string) (Config, error) {
@@ -77,16 +71,13 @@ func Parse(args []string) (Config, error) {
 	}
 
 	cfg := Config{
-		Listen:             strings.TrimSpace(listen),
-		DNS:                normalizeDNSValue(dns),
-		DoHURL:             normalizeDoHURL(dohURL),
-		LogLevel:           level,
-		Domains:            parseDomains(domainsRaw),
-		MaxConnections:     maxConns,
-		DialTimeout:        DefaultDialTimeout,
-		IdleTimeout:        DefaultIdleTimeout,
-		ClientHelloTimeout: DefaultClientHelloTimeout,
-		SplitDelay:         splitDelay,
+		Listen:         strings.TrimSpace(listen),
+		DNS:            normalizeDNSValue(dns),
+		DoHURL:         normalizeDoHURL(dohURL),
+		LogLevel:       level,
+		Domains:        parseDomains(domainsRaw),
+		MaxConnections: maxConns,
+		SplitDelay:     splitDelay,
 	}
 
 	if err := cfg.Validate(); err != nil {

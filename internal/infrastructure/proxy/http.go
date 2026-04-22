@@ -90,6 +90,14 @@ func (s *Server) handleBypassedHTTP(w http.ResponseWriter, request *http.Request
 
 	conn, err := s.dialer.DialContext(request.Context(), "tcp", targetAddress)
 	if err != nil {
+		if canFallbackToStandardProxy(request) {
+			s.logger.Debug("falling back to standard HTTP proxy after bypass dial failure",
+				"method", request.Method,
+				"host", request.URL.Host,
+				"error", err,
+			)
+			return false
+		}
 		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		if isCanceled(err) {
 			s.logger.Debug("HTTP bypass request ended before upstream was ready",
@@ -121,6 +129,14 @@ func (s *Server) handleBypassedHTTP(w http.ResponseWriter, request *http.Request
 
 	splitOffset, manipulated, err := s.writeBypassedHTTPRequest(conn, request)
 	if err != nil {
+		if canFallbackToStandardProxy(request) {
+			s.logger.Debug("falling back to standard HTTP proxy after bypass write failure",
+				"method", request.Method,
+				"host", request.URL.Host,
+				"error", err,
+			)
+			return false
+		}
 		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		s.logger.Error("failed to send bypassed HTTP request",
 			"method", request.Method,
@@ -229,7 +245,7 @@ func readHTTPHeaderBlock(reader io.Reader) ([]byte, []byte, error) {
 	buffer := make([]byte, 0, 16<<10)
 	chunk := make([]byte, 4<<10)
 
-	for len(buffer) < maxPeekBuffer {
+	for len(buffer) < maxHTTPHeaderSize {
 		n, err := reader.Read(chunk)
 		if n > 0 {
 			buffer = append(buffer, chunk[:n]...)
@@ -253,7 +269,7 @@ func readHTTPHeaderBlock(reader io.Reader) ([]byte, []byte, error) {
 		}
 	}
 
-	return nil, nil, fmt.Errorf("HTTP header block exceeds %d bytes or is incomplete", maxPeekBuffer)
+	return nil, nil, fmt.Errorf("HTTP header block exceeds %d bytes or is incomplete", maxHTTPHeaderSize)
 }
 
 func rewriteHTTPRequestHeaders(headerBlock []byte) ([]byte, int, bool, error) {
@@ -319,6 +335,18 @@ func normalizeHTTPAddress(host string) string {
 		return host
 	}
 	return net.JoinHostPort(host, "80")
+}
+
+func canFallbackToStandardProxy(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+	switch request.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	default:
+		return false
+	}
+	return request.Body == nil || request.Body == http.NoBody || request.ContentLength == 0
 }
 
 func outboundURL(r *http.Request) (*url.URL, error) {

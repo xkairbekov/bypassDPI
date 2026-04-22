@@ -28,7 +28,6 @@ type Server struct {
 	options       Options
 	logger        *slog.Logger
 	startupLogger *slog.Logger
-	resolver      dns.Resolver
 	matcher       *policy.Matcher
 	dialer        *outboundDialer
 	transport     http.RoundTripper
@@ -39,7 +38,15 @@ type outboundDialer struct {
 	resolver dns.Resolver
 }
 
+type dialResult struct {
+	target string
+	conn   net.Conn
+	err    error
+}
+
 func NewServer(options Options, resolver dns.Resolver, matcher *policy.Matcher, logger *slog.Logger, startupLogger *slog.Logger) *Server {
+	options = normalizeOptions(options)
+
 	dialer := &outboundDialer{
 		timeout:  options.DialTimeout,
 		resolver: resolver,
@@ -49,7 +56,6 @@ func NewServer(options Options, resolver dns.Resolver, matcher *policy.Matcher, 
 		options:       options,
 		logger:        logger,
 		startupLogger: startupLogger,
-		resolver:      resolver,
 		matcher:       matcher,
 		dialer:        dialer,
 		transport: &http.Transport{
@@ -59,9 +65,9 @@ func NewServer(options Options, resolver dns.Resolver, matcher *policy.Matcher, 
 			MaxIdleConns:          64,
 			MaxIdleConnsPerHost:   16,
 			IdleConnTimeout:       options.IdleTimeout,
-			ResponseHeaderTimeout: 30 * time.Second,
+			ResponseHeaderTimeout: upstreamResponseHeaderTimeout,
 			TLSHandshakeTimeout:   options.DialTimeout,
-			ExpectContinueTimeout: time.Second,
+			ExpectContinueTimeout: upstreamExpectContinueTimeout,
 		},
 	}
 }
@@ -76,16 +82,16 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 	server := &http.Server{
 		Handler:           s,
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
 		IdleTimeout:       s.options.IdleTimeout,
-		MaxHeaderBytes:    1 << 20,
+		MaxHeaderBytes:    maxHTTPHeaderSize,
 	}
 
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
@@ -127,33 +133,84 @@ func (d *outboundDialer) DialContext(ctx context.Context, network string, addres
 		return nil, fmt.Errorf("resolve %s: %w", host, err)
 	}
 
-	var lastErr error
 	attemptedTargets := make([]string, 0, len(ips))
 	for _, ip := range ips {
-		target := net.JoinHostPort(ip.String(), port)
-		attemptedTargets = append(attemptedTargets, target)
-		conn, err := (&net.Dialer{
-			Timeout:   d.timeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext(ctx, network, target)
-		if err != nil {
-			lastErr = err
+		attemptedTargets = append(attemptedTargets, net.JoinHostPort(ip.String(), port))
+	}
+
+	conn, err := d.dialTargets(ctx, network, attemptedTargets)
+	if err != nil {
+		return nil, fmt.Errorf("connect to %s failed after trying [%s]: %w", address, strings.Join(attemptedTargets, ", "), err)
+	}
+
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.SetNoDelay(true)
+		_ = tcpConn.SetKeepAlive(true)
+		_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	}
+
+	return conn, nil
+}
+
+func (d *outboundDialer) dialTargets(ctx context.Context, network string, targets []string) (net.Conn, error) {
+	if len(targets) == 0 {
+		return nil, errors.New("resolver returned no dialable targets")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	results := make(chan dialResult, len(targets))
+	for index, target := range targets {
+		go func(index int, target string) {
+			delay := time.Duration(index) * 250 * time.Millisecond
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					results <- dialResult{target: target, err: ctx.Err()}
+					return
+				}
+			}
+
+			conn, err := (&net.Dialer{
+				Timeout:   d.timeout,
+				KeepAlive: 30 * time.Second,
+			}).DialContext(ctx, network, target)
+			results <- dialResult{target: target, conn: conn, err: err}
+		}(index, target)
+	}
+
+	var (
+		winner  net.Conn
+		lastErr error
+	)
+	for range targets {
+		result := <-results
+		if result.err == nil && result.conn != nil {
+			if winner == nil {
+				winner = result.conn
+				cancel()
+				continue
+			}
+			_ = result.conn.Close()
 			continue
 		}
 
-		if tcpConn, ok := conn.(*net.TCPConn); ok {
-			_ = tcpConn.SetNoDelay(true)
-			_ = tcpConn.SetKeepAlive(true)
-			_ = tcpConn.SetKeepAlivePeriod(30 * time.Second)
+		if result.err != nil && !errors.Is(result.err, context.Canceled) {
+			lastErr = result.err
 		}
-
-		return conn, nil
 	}
 
+	if winner != nil {
+		return winner, nil
+	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("resolver returned no dialable IPs for %s", host)
+		lastErr = errors.New("all dial attempts were canceled")
 	}
-	return nil, fmt.Errorf("connect to %s failed after trying [%s]: %w", address, strings.Join(attemptedTargets, ", "), lastErr)
+	return nil, lastErr
 }
 
 func isCanceled(err error) bool {
@@ -246,4 +303,17 @@ func maxConnectionsForLog(value int) any {
 		return "unlimited"
 	}
 	return value
+}
+
+func normalizeOptions(options Options) Options {
+	if options.DialTimeout <= 0 {
+		options.DialTimeout = defaultDialTimeout
+	}
+	if options.IdleTimeout <= 0 {
+		options.IdleTimeout = defaultIdleTimeout
+	}
+	if options.ClientHelloTimeout <= 0 {
+		options.ClientHelloTimeout = defaultClientHelloTimeout
+	}
+	return options
 }

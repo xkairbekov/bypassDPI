@@ -11,7 +11,7 @@ func New(level slog.Level) *slog.Logger {
 	return newLogger(level)
 }
 
-func Startup() *slog.Logger {
+func Always() *slog.Logger {
 	return newLogger(slog.LevelDebug)
 }
 

@@ -14,11 +14,6 @@ import (
 	"github.com/xkairbekov/bypassdpi/internal/domain/tlshello"
 )
 
-const (
-	maxInitialPayload = 32 << 10
-	maxPeekBuffer     = 64 << 10
-)
-
 var connectEstablishedResponse = []byte("HTTP/1.1 200 Connection Established\r\n\r\n")
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +112,7 @@ func (s *Server) relayConnect(clientConn net.Conn, clientReader *bufio.Reader, u
 }
 
 func (s *Server) copyClientToUpstream(clientConn net.Conn, reader *bufio.Reader, upstreamConn net.Conn, host string, port string, target string, remoteAddr string) error {
-	if port == "443" {
+	if s.shouldInspectTLS(host, port) {
 		initialPayload, err := s.readInitialTLSPayload(clientConn, reader)
 		if err != nil {
 			return err
@@ -131,6 +126,16 @@ func (s *Server) copyClientToUpstream(clientConn net.Conn, reader *bufio.Reader,
 
 	_, err := io.CopyBuffer(upstreamConn, reader, make([]byte, 32<<10))
 	return err
+}
+
+func (s *Server) shouldInspectTLS(host string, port string) bool {
+	if port != "443" {
+		return false
+	}
+	if s.matcher == nil || s.matcher.Match(host) {
+		return true
+	}
+	return net.ParseIP(host) != nil
 }
 
 func (s *Server) readInitialTLSPayload(clientConn net.Conn, reader *bufio.Reader) ([]byte, error) {

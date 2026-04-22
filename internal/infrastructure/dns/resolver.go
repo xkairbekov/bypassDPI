@@ -18,6 +18,8 @@ import (
 const (
 	defaultCacheTTL = time.Minute
 	maxCacheTTL     = 5 * time.Minute
+	maxCacheEntries = 4096
+	defaultTimeout  = 10 * time.Second
 )
 
 type Config struct {
@@ -57,7 +59,7 @@ type dohResolver struct {
 func NewResolver(cfg Config) (Resolver, error) {
 	timeout := cfg.Timeout
 	if timeout <= 0 {
-		timeout = 10 * time.Second
+		timeout = defaultTimeout
 	}
 
 	if cfg.DoHURL != "" {
@@ -220,10 +222,20 @@ func (r *dohResolver) exchange(ctx context.Context, host string, recordType uint
 }
 
 func (r *dohResolver) loadCache(host string) ([]net.IP, bool) {
+	now := time.Now()
+
 	r.mu.RLock()
 	entry, ok := r.cache[host]
 	r.mu.RUnlock()
-	if !ok || time.Now().After(entry.expiresAt) {
+	if !ok {
+		return nil, false
+	}
+	if now.After(entry.expiresAt) {
+		r.mu.Lock()
+		if current, ok := r.cache[host]; ok && now.After(current.expiresAt) {
+			delete(r.cache, host)
+		}
+		r.mu.Unlock()
 		return nil, false
 	}
 	return cloneIPs(entry.ips), true
@@ -237,12 +249,41 @@ func (r *dohResolver) storeCache(host string, ips []net.IP, ttl time.Duration) {
 		ttl = maxCacheTTL
 	}
 
+	now := time.Now()
 	r.mu.Lock()
+	r.cleanupExpiredLocked(now)
+	if _, exists := r.cache[host]; !exists && len(r.cache) >= maxCacheEntries {
+		r.evictOldestLocked()
+	}
 	r.cache[host] = cacheEntry{
 		ips:       cloneIPs(ips),
-		expiresAt: time.Now().Add(ttl),
+		expiresAt: now.Add(ttl),
 	}
 	r.mu.Unlock()
+}
+
+func (r *dohResolver) cleanupExpiredLocked(now time.Time) {
+	for host, entry := range r.cache {
+		if now.After(entry.expiresAt) {
+			delete(r.cache, host)
+		}
+	}
+}
+
+func (r *dohResolver) evictOldestLocked() {
+	var (
+		oldestHost string
+		oldestTime time.Time
+	)
+	for host, entry := range r.cache {
+		if oldestHost == "" || entry.expiresAt.Before(oldestTime) {
+			oldestHost = host
+			oldestTime = entry.expiresAt
+		}
+	}
+	if oldestHost != "" {
+		delete(r.cache, oldestHost)
+	}
 }
 
 func lookupWithResolver(ctx context.Context, timeout time.Duration, resolver *net.Resolver, host string) ([]net.IP, error) {

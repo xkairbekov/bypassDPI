@@ -1,6 +1,6 @@
 # bypassDPI
 
-A lightweight HTTP/HTTPS forward proxy that circumvents Deep Packet Inspection (DPI) to restore access to blocked websites — without a VPN.
+A lightweight HTTP forward proxy that circumvents Deep Packet Inspection (DPI) to restore access to blocked websites — without a VPN.
 
 ---
 
@@ -35,15 +35,6 @@ Download the archive for your platform from [Releases](../../releases), extract 
  
 ```bash
 ./bypassdpi --listen 127.0.0.1:8080
-```
- 
-### Proxy Configuration
- 
-After starting, point your browser or OS network settings to:
- 
-```
-HTTP proxy:  127.0.0.1:8080
-HTTPS proxy: 127.0.0.1:8080
 ```
 
 ---

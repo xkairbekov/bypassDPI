@@ -13,9 +13,8 @@ import (
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, startupLogger *slog.Logger) error {
 	resolver, err := dns.NewResolver(dns.Config{
-		DNS:     cfg.DNS,
-		DoHURL:  cfg.DoHURL,
-		Timeout: cfg.DialTimeout,
+		DNS:    cfg.DNS,
+		DoHURL: cfg.DoHURL,
 	})
 	if err != nil {
 		return fmt.Errorf("build resolver: %w", err)
@@ -23,12 +22,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, startupLog
 
 	server := proxy.NewServer(
 		proxy.Options{
-			Listen:             cfg.Listen,
-			MaxConnections:     cfg.MaxConnections,
-			DialTimeout:        cfg.DialTimeout,
-			IdleTimeout:        cfg.IdleTimeout,
-			ClientHelloTimeout: cfg.ClientHelloTimeout,
-			SplitDelay:         cfg.SplitDelay,
+			Listen:         cfg.Listen,
+			MaxConnections: cfg.MaxConnections,
+			SplitDelay:     cfg.SplitDelay,
 		},
 		resolver,
 		policy.New(cfg.Domains),

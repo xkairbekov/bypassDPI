@@ -32,7 +32,7 @@ func run() error {
 		return err
 	}
 
-	startupLogger := logging.Startup()
+	startupLogger := logging.Always()
 	logger := logging.New(cfg.LogLevel)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
